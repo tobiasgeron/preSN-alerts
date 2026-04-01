@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Lasair LSST API + ALeRCE cutout experiment (refactored from Lasair_and_alerce_experiment.ipynb).
+Lasair LSST API + ALeRCE cutout experiment (refactored from notebook/Lasair_and_alerce_experiment.ipynb).
 
 Query Sherlock SN-classified objects from Lasair, resolve recent diaSources, then fetch
 science/template/difference stamps from ALeRCE and plot them.

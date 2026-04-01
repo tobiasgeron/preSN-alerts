@@ -2,7 +2,7 @@
 
 This repository contains a small experiment that queries the [Lasair LSST](https://lasair.lsst.ac.uk/) API for objects Sherlock classifies as supernovae, then pulls science, template, and difference image stamps from the [ALeRCE](https://alerce.science/) broker for matching `diaObjectId` / `diaSourceId` pairs.
 
-The original exploratory notebook is `Lasair_and_alerce_experiment.ipynb`. The same workflow is available as a command-line script with configurable parameters.
+The original exploratory notebook is `notebook/Lasair_and_alerce_experiment.ipynb`. The same workflow is available as a command-line script with configurable parameters.
 
 ## Requirements
 
