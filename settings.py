@@ -1,1 +1,1 @@
-API_KEY = 'abc' #put lasair api key here
+API_TOKEN = 'abc' #put lasair api key here
