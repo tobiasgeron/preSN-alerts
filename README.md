@@ -41,17 +41,28 @@ python lasair_alerce_experiment.py --simple-query
 python lasair_alerce_experiment.py --single-demo
 ```
 
-Useful options:
+Useful options (defaults are listed in `python lasair_alerce_experiment.py --help`):
 
-| Option | Default | Meaning |
-|--------|---------|---------|
-| `--lasair-token` | `$LASAIR_API_TOKEN` | Lasair API token |
-| `--lasair-endpoint` | `https://api.lasair.lsst.ac.uk/api` | API base URL |
-| `--delta-t` | `1` | Max days since last diaSource (same idea as the notebook) |
-| `--query-limit` | `10` | SQL `LIMIT` on the SN candidate query |
-| `--max-plots` | `10` | Cap on interactive figures (full pipeline) |
+| Option | Meaning |
+|--------|---------|
+| `--lasair-token` | Lasair API token (else env `LASAIR_API_TOKEN`) |
+| `--lasair-endpoint` | Lasair API base URL |
+| `--lasair-tables` | Comma-separated tables for joins (default `objects,sherlock_classifications`) |
+| `--sherlock-classification` | Sherlock class to match (default `SN`) |
+| `--delta-t` | Keep diaSources with `mjd_now - midpointMjdTai` ≤ this value (days) |
+| `--query-limit` | SQL `LIMIT` on the detailed SN candidate query |
+| `--simple-query-limit` | SQL `LIMIT` for `--simple-query` |
+| `--max-plots` | Maximum stamp figures in the full pipeline |
+| `--preview-rows` | Rows of the pair table printed before plotting |
+| `--alerce-survey` | Survey name for ALeRCE `get_stamps` (e.g. `lsst`) |
+| `--no-shuffle` | Do not randomize `(diaObjectId, diaSourceId)` order |
+| `--random-state` | Seed for shuffling when shuffle is enabled |
+| `--plot-snr-vmin`, `--plot-snr-vmax` | SNR panel color scale |
+| `--crosshair-arm-fraction`, `--crosshair-gap-fraction` | Crosshair size vs stamp width |
 
 You can pass the token on the command line instead of the environment variable if you prefer (`--lasair-token`).
+
+For programmatic use, construct `ExperimentConfig` and optional `PlotStyle` in Python; public functions in `lasair_alerce_experiment.py` use NumPy-style docstrings.
 
 ## License
 
