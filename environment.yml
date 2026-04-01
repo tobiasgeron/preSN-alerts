@@ -9,8 +9,12 @@ dependencies:
   - pandas
   - astropy
   - matplotlib
+  - requests
   - tqdm
   - pip
   - pip:
     - lasair>=0.1.2
     - alerce>=2.0
+    - plotly>=5.18
+    - dash>=2.14
+    - dash-extensions>=1.0.0
