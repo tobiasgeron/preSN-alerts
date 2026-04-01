@@ -1,0 +1,16 @@
+# Conda environment: core scientific stack from conda-forge; Lasair + ALeRCE clients via pip
+# (install with: conda env create -f environment.yml && conda activate presn-alerts)
+name: presn-alerts
+channels:
+  - conda-forge
+dependencies:
+  - python>=3.10,<3.13
+  - numpy
+  - pandas
+  - astropy
+  - matplotlib
+  - tqdm
+  - pip
+  - pip:
+    - lasair>=0.1.2
+    - alerce>=2.0
