@@ -23,25 +23,39 @@ Obtain a Lasair API token from your Lasair account and export it:
 export LASAIR_API_TOKEN="your-token-here"
 ```
 
+## Logging
+
+Progress and results are sent through Python’s `logging` module (not raw `print`). By default the script writes to `logs/pre_sn_alerts.log` (the directory is created automatically) and echoes messages at `INFO` and above to stderr.
+
+| Option | Role |
+|--------|------|
+| `--log-file` | Path to the log file |
+| `--console-log-level` | Level for stderr (`DEBUG`, `INFO`, `WARNING`, …) |
+| `--file-log-level` | Level for the file (often `DEBUG` for full detail) |
+
+`tqdm` progress for Lasair object fetches is forwarded to the log at `DEBUG`. Use `--console-log-level DEBUG` if you want the same detail on the terminal.
+
+Shared setup lives in `utils/utilities.py` (`configure_application_logging`, `get_app_logger`, etc.).
+
 ## Usage
 
 Full pipeline (default): query recent SN candidates, build `(diaObjectId, diaSourceId)` pairs within `--delta-t` days, then plot up to `--max-plots` ALeRCE stamp sets.
 
 ```bash
-python lasair_alerce_experiment.py
+python pre_sn_alerts.py
 ```
 
 Other modes:
 
 ```bash
 # Minimal Lasair query (object id, RA, Dec only)
-python lasair_alerce_experiment.py --simple-query
+python pre_sn_alerts.py --simple-query
 
 # One object from the detailed query, single cutout figure
-python lasair_alerce_experiment.py --single-demo
+python pre_sn_alerts.py --single-demo
 ```
 
-Useful options (defaults are listed in `python lasair_alerce_experiment.py --help`):
+Useful options (defaults are listed in `python pre_sn_alerts.py --help`):
 
 | Option | Meaning |
 |--------|---------|
@@ -62,7 +76,7 @@ Useful options (defaults are listed in `python lasair_alerce_experiment.py --hel
 
 You can pass the token on the command line instead of the environment variable if you prefer (`--lasair-token`).
 
-For programmatic use, construct `ExperimentConfig` and optional `PlotStyle` in Python; public functions in `lasair_alerce_experiment.py` use NumPy-style docstrings.
+For programmatic use, construct `ExperimentConfig` and optional `PlotStyle` in Python; public functions in `pre_sn_alerts.py` use NumPy-style docstrings.
 
 ## License
 

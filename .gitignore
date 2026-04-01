@@ -13,6 +13,7 @@ venv/
 
 # Local data / downloads from experiments
 data/
+logs/
 *.fits
 *.fits.gz
 

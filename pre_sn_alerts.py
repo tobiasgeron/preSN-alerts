@@ -10,14 +10,20 @@ displays a four-panel summary figure. Configuration is centralized in
 Notes
 -----
 Requires a Lasair API token (environment variable ``LASAIR_API_TOKEN`` or ``--lasair-token``).
+
+Diagnostic output uses the standard library :mod:`logging` module. Configure a log file
+with ``--log-file``; messages are written to that file and echoed to stderr at the
+console log level (see ``--console-log-level`` and ``--file-log-level``).
 """
 
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import sys
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 import matplotlib.axes
@@ -31,6 +37,13 @@ from tqdm import tqdm
 from alerce.core import Alerce
 from lasair import lasair_client as lasair
 
+from utils.utilities import (
+    configure_application_logging,
+    get_app_logger,
+    parse_loglevel_name,
+    tqdm_log_stream,
+)
+
 # -----------------------------------------------------------------------------
 # Defaults (CLI and :class:`ExperimentConfig` use these as factory defaults)
 # -----------------------------------------------------------------------------
@@ -41,6 +54,8 @@ DEFAULT_LASAIR_TOKEN_ENV = "LASAIR_API_TOKEN"
 DEFAULT_OBJECTS_SHERLOCK_TABLES = "objects,sherlock_classifications"
 DEFAULT_SHERLOCK_CLASSIFICATION = "SN"
 DEFAULT_ALERCE_SURVEY = "lsst"
+
+DEFAULT_LOG_FILE = Path("logs") / "pre_sn_alerts.log"
 
 
 def default_sn_candidate_select_list() -> str:
@@ -222,15 +237,17 @@ def get_lasair_token(cli_token: str | None, env_var: str = DEFAULT_LASAIR_TOKEN_
     Raises
     ------
     SystemExit
-        If no token is available (message printed to stderr).
+        If no token is available (message logged and process exits with code 1).
     """
+    log = get_app_logger()
     token = cli_token or os.environ.get(env_var)
     if not token or not str(token).strip():
-        print(
-            f"Missing Lasair API token. Set {env_var} or pass --lasair-token.",
-            file=sys.stderr,
+        log.error(
+            "Missing Lasair API token. Set %s or pass --lasair-token.",
+            env_var,
         )
         sys.exit(1)
+    log.debug("Lasair API token loaded from %s", "CLI" if cli_token else env_var)
     return str(token).strip()
 
 
@@ -250,6 +267,8 @@ def make_lasair_client(token: str, endpoint: str) -> Any:
     object
         Client instance returned by ``lasair_client.lasair`` (typed as ``Any``).
     """
+    log = get_app_logger()
+    log.info("Lasair client created for endpoint %r", endpoint)
     return lasair(token, endpoint=endpoint)
 
 
@@ -389,16 +408,30 @@ def query_sn_candidates(
     list of dict
         Rows returned by ``client.query``.
     """
+    log = get_app_logger()
     conditions = build_conditions_sn_recent(
         config.delta_t,
         config.sherlock_classification,
     )
-    return client.query(
+    log.info(
+        "Lasair detailed query: tables=%r classification=%r delta_t=%s limit=%s",
+        config.lasair_objects_sherlock_tables,
+        config.sherlock_classification,
+        config.delta_t,
+        config.query_limit,
+    )
+    log.debug("Lasair WHERE clause: %s", " ".join(conditions.split()))
+    rows = client.query(
         config.sn_candidate_select,
         config.lasair_objects_sherlock_tables,
         conditions,
         limit=config.query_limit,
     )
+    log.info("Lasair detailed query returned %d row(s)", len(rows))
+    if rows and log.isEnabledFor(logging.DEBUG):
+        sample = rows[0]
+        log.debug("First row keys: %s", list(sample.keys()))
+    return rows
 
 
 def collect_dia_object_source_pairs(
@@ -426,19 +459,48 @@ def collect_dia_object_source_pairs(
     pandas.DataFrame
         Columns ``diaObjectId`` and ``diaSourceId``. Empty if no pairs qualify.
     """
+    log = get_app_logger()
+    n_obj = len(dia_object_ids)
+    log.info(
+        "Fetching Lasair object records for %d diaObject(s); mjd_now=%.6f delta_t=%s "
+        "lasair_added=%s",
+        n_obj,
+        mjd_now,
+        config.delta_t,
+        config.lasair_object_lasair_added,
+    )
     rows: list[dict[str, int]] = []
-    for i in tqdm(range(len(dia_object_ids)), desc="Lasair objects"):
+    for i in tqdm(
+        range(n_obj),
+        desc="Lasair objects",
+        file=tqdm_log_stream(logging.DEBUG),
+        mininterval=2.0,
+    ):
         oid = int(dia_object_ids[i])
         obj_result = client.object(oid, lasair_added=config.lasair_object_lasair_added)
-        for sid in dia_source_ids_within_delta_t(obj_result, mjd_now, config.delta_t):
+        kept = dia_source_ids_within_delta_t(obj_result, mjd_now, config.delta_t)
+        log.debug(
+            "diaObjectId=%s: %d diaSource(s) in window (index %d/%d)",
+            oid,
+            len(kept),
+            i + 1,
+            n_obj,
+        )
+        for sid in kept:
             rows.append({"diaObjectId": oid, "diaSourceId": int(sid)})
+    log.info("Built %d (diaObjectId, diaSourceId) pair(s) before optional shuffle", len(rows))
     data = pd.DataFrame(rows)
     if data.empty:
         return data
     if config.shuffle_pairs:
+        log.info(
+            "Shuffling pair table (random_state=%s)",
+            config.random_state,
+        )
         return data.sample(frac=1.0, random_state=config.random_state).reset_index(
             drop=True
         )
+    log.info("Pair shuffle disabled; row order is deterministic")
     return data
 
 
@@ -504,12 +566,20 @@ def plot_main_figure(
     Figure
         The figure containing the four panels.
     """
+    log = get_app_logger()
     st = style or PlotStyle()
     calexp_cutout = np.asarray(calexp[0].data)
     template_cutout = np.asarray(template[0].data)
     diff_cutout = np.asarray(diff[0].data)
     variance = np.asarray(diff[1].data)
     snr = diff_cutout / np.sqrt(variance)
+
+    log.debug(
+        "plot_main_figure: science shape=%s template=%s diff=%s",
+        getattr(calexp_cutout, "shape", None),
+        getattr(template_cutout, "shape", None),
+        getattr(diff_cutout, "shape", None),
+    )
 
     stamp_px = float(calexp_cutout.shape[0])
     cx = stamp_px / 2.0
@@ -578,6 +648,7 @@ def plot_main_figure(
         ax.set_yticks([])
 
     fig.tight_layout()
+    log.debug("plot_main_figure: layout complete; show=%s", show)
     if show:
         plt.show()
     return fig
@@ -608,12 +679,21 @@ def fetch_and_plot_stamps(
     Figure
         Figure from :func:`plot_main_figure`.
     """
+    log = get_app_logger()
+    log.info(
+        "ALeRCE get_stamps: survey=%r oid=%s measurement_id=%s include_variance_and_mask=%s",
+        config.alerce_survey,
+        dia_object_id,
+        dia_source_id,
+        config.alerce_include_variance_and_mask,
+    )
     cutouts = alerce_client.get_stamps(
         oid=dia_object_id,
         measurement_id=dia_source_id,
         survey=config.alerce_survey,
         include_variance_and_mask=config.alerce_include_variance_and_mask,
     )
+    log.debug("ALeRCE cutout keys: %s", list(cutouts.keys()))
     return plot_main_figure(
         cutouts["cutoutScience"],
         cutouts["cutoutTemplate"],
@@ -630,7 +710,7 @@ def fetch_and_plot_stamps(
 
 def run_simple_query(client: Any, config: ExperimentConfig) -> None:
     """
-    Run a minimal Lasair query and print diaObjectId, RA, and Dec.
+    Run a minimal Lasair query and log diaObjectId, RA, and Dec.
 
     Parameters
     ----------
@@ -639,6 +719,13 @@ def run_simple_query(client: Any, config: ExperimentConfig) -> None:
     config : ExperimentConfig
         SELECT list, tables, classification, and ``simple_query_limit``.
     """
+    log = get_app_logger()
+    log.info(
+        "Simple Lasair query: limit=%s tables=%r classification=%r",
+        config.simple_query_limit,
+        config.lasair_objects_sherlock_tables,
+        config.sherlock_classification,
+    )
     conditions = build_conditions_simple_sn(config.sherlock_classification)
     results = client.query(
         config.simple_query_select,
@@ -646,8 +733,14 @@ def run_simple_query(client: Any, config: ExperimentConfig) -> None:
         conditions,
         limit=config.simple_query_limit,
     )
+    log.info("Simple query returned %d row(s)", len(results))
     for row in results:
-        print(row["diaObjectId"], row["ra"], row["decl"])
+        log.info(
+            "object: diaObjectId=%s ra=%s decl=%s",
+            row["diaObjectId"],
+            row["ra"],
+            row["decl"],
+        )
 
 
 def run_single_object_demo(
@@ -667,22 +760,29 @@ def run_single_object_demo(
     config : ExperimentConfig
         Query limits, ``delta_t``, and plotting options.
     """
+    log = get_app_logger()
+    log.info("Single-object demo mode: using first SN candidate from detailed query")
     mjd_now = Time.now().mjd
+    log.debug("Current MJD for recency filter: %.6f", mjd_now)
     results = query_sn_candidates(client, config)
     if not results:
-        print("No objects returned from Lasair query.")
+        log.warning("No objects returned from Lasair query; nothing to plot")
         return
     dia_object_ids = [results[i]["diaObjectId"] for i in range(len(results))]
     dia_object_id = int(dia_object_ids[0])
+    log.info("Using first candidate diaObjectId=%s (of %d)", dia_object_id, len(results))
     obj_result = client.object(
         dia_object_id, lasair_added=config.lasair_object_lasair_added
     )
     ids = dia_source_ids_within_delta_t(obj_result, mjd_now, config.delta_t)
     if ids.size == 0:
-        print(
-            "No diaSources within delta_t for the first object; try a larger --delta-t."
+        log.warning(
+            "No diaSources within delta_t=%s for diaObjectId=%s; try a larger --delta-t",
+            config.delta_t,
+            dia_object_id,
         )
         return
+    log.info("Using first diaSource in window: diaSourceId=%s", int(ids[0]))
     fetch_and_plot_stamps(alerce_client, dia_object_id, int(ids[0]), config)
 
 
@@ -703,26 +803,33 @@ def run_full_pipeline(
     config : ExperimentConfig
         Full experiment parameters including ``max_plots`` and ``preview_table_rows``.
     """
+    log = get_app_logger()
+    log.info(
+        "Full pipeline: preview_rows=%s max_plots=%s",
+        config.preview_table_rows,
+        config.max_plots,
+    )
     mjd_now = Time.now().mjd
+    log.debug("Current MJD for recency filter: %.6f", mjd_now)
     results = query_sn_candidates(client, config)
     if not results:
-        print("No objects returned from Lasair query.")
+        log.warning("No objects returned from Lasair query; pipeline stops")
         return
     dia_object_ids = [int(results[i]["diaObjectId"]) for i in range(len(results))]
     data = collect_dia_object_source_pairs(client, dia_object_ids, mjd_now, config)
     if data.empty:
-        print("No diaObject/diaSource pairs within delta_t.")
+        log.warning("No diaObject/diaSource pairs within delta_t=%s", config.delta_t)
         return
     n_preview = min(config.preview_table_rows, len(data))
-    print(data.head(n_preview).to_string())
+    log.info("Pair table preview (%d of %d rows):\n%s", n_preview, len(data), data.head(n_preview).to_string())
     n_plot = min(config.max_plots, len(data))
+    log.info("Plotting %d stamp figure(s)", n_plot)
     for i in range(n_plot):
-        fetch_and_plot_stamps(
-            alerce_client,
-            int(data["diaObjectId"].iloc[i]),
-            int(data["diaSourceId"].iloc[i]),
-            config,
-        )
+        oid = int(data["diaObjectId"].iloc[i])
+        sid = int(data["diaSourceId"].iloc[i])
+        log.info("Figure %d/%d: diaObjectId=%s diaSourceId=%s", i + 1, n_plot, oid, sid)
+        fetch_and_plot_stamps(alerce_client, oid, sid, config)
+    log.info("Full pipeline finished (%d figure(s))", n_plot)
 
 
 def config_from_args(args: argparse.Namespace) -> ExperimentConfig:
@@ -773,6 +880,21 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description="Lasair + ALeRCE SN cutout experiment (see README.md).",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    p.add_argument(
+        "--log-file",
+        default=str(DEFAULT_LOG_FILE),
+        help="Log file path (parent directory is created if missing).",
+    )
+    p.add_argument(
+        "--console-log-level",
+        default="INFO",
+        help="Minimum level for messages echoed to stderr.",
+    )
+    p.add_argument(
+        "--file-log-level",
+        default="DEBUG",
+        help="Minimum level for messages written to the log file.",
     )
     p.add_argument(
         "--lasair-token",
@@ -888,18 +1010,52 @@ def main(argv: list[str] | None = None) -> None:
         If None, use ``sys.argv[1:]``.
     """
     args = build_arg_parser().parse_args(argv)
-    token = get_lasair_token(args.lasair_token)
-    cfg = config_from_args(args)
-    client = make_lasair_client(token, cfg.lasair_endpoint)
-    alerce_client = Alerce()
+    try:
+        console_level = parse_loglevel_name(args.console_log_level)
+        file_level = parse_loglevel_name(args.file_log_level)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        sys.exit(2)
 
-    if args.simple_query:
-        run_simple_query(client, cfg)
-        return
-    if args.single_demo:
-        run_single_object_demo(client, alerce_client, cfg)
-        return
-    run_full_pipeline(client, alerce_client, cfg)
+    configure_application_logging(
+        Path(args.log_file),
+        console_level=console_level,
+        file_level=file_level,
+    )
+    log = get_app_logger()
+    mode = (
+        "simple-query"
+        if args.simple_query
+        else "single-demo"
+        if args.single_demo
+        else "full-pipeline"
+    )
+    log.info("Run started (mode=%s)", mode)
+    log.debug(
+        "CLI snapshot: endpoint=%r delta_t=%s query_limit=%s log_file=%r",
+        args.lasair_endpoint,
+        args.delta_t,
+        args.query_limit,
+        args.log_file,
+    )
+
+    try:
+        token = get_lasair_token(args.lasair_token)
+        cfg = config_from_args(args)
+        client = make_lasair_client(token, cfg.lasair_endpoint)
+        alerce_client = Alerce()
+        log.info("ALeRCE client initialized")
+
+        if args.simple_query:
+            run_simple_query(client, cfg)
+        elif args.single_demo:
+            run_single_object_demo(client, alerce_client, cfg)
+        else:
+            run_full_pipeline(client, alerce_client, cfg)
+        log.info("Run finished successfully (mode=%s)", mode)
+    except Exception:
+        log.exception("Run failed (mode=%s)", mode)
+        raise
 
 
 if __name__ == "__main__":
