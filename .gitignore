@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Environments
+.env
+.venv/
+venv/
+
+# Local data / downloads from experiments
+data/
+logs/
+*.fits
+*.fits.gz
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
